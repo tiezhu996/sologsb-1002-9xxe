@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Comment, EditConflict, Paragraph, Reply, Role, Version } from '../types'
+import type { Comment, EditConflict, Paragraph, Reply, ReviewDecision, ReviewRecord, Role, Version } from '../types'
 
 const DRAFT_KEY = 'sologsb-1002-draft-v1'
 const id = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
@@ -14,17 +14,18 @@ const baseParagraphs: Paragraph[] = [
   { id: 'p-07', section: '3 结果', number: '7.', text: '在高活跃度项目中，维护者更关注建议是否可验证，而非建议生成速度。', original: '在高活跃度项目中，维护者更关注建议是否可验证，而非建议生成速度。', status: 'open', highlighted: false },
 ]
 const baseComments: Comment[] = [
-  { id: 'c-01', paragraphId: 'p-02', author: '审稿人 A', role: 'reviewer', type: 'suggestion', quote: '其真实维护工作流中的影响', body: '建议把“影响”具体化为可观察指标。', suggestion: '近年来，大型语言模型被广泛用于代码生成与缺陷定位，但在真实维护工作流中究竟改变了哪些协作行为，仍缺少系统证据。', status: 'open', replies: [{ id: 'r-01', author: '作者', role: 'author', body: '可以，修改后会补充指标定义。', createdAt: Date.now() - 7200000 }], createdAt: Date.now() - 86400000 },
-  { id: 'c-02', paragraphId: 'p-02', author: '审稿人 B', role: 'reviewer', type: 'comment', quote: '缺少系统证据', body: '这里的“系统证据”范围过大，建议限定为本研究覆盖的议题语料。', status: 'open', replies: [], createdAt: Date.now() - 64000000 },
-  { id: 'c-03', paragraphId: 'p-03', author: '审稿人 A', role: 'reviewer', type: 'comment', quote: '26 位核心维护者', body: '请说明抽样方式和地域分布，避免样本选择偏差。', status: 'open', replies: [], createdAt: Date.now() - 54000000 },
-  { id: 'c-04', paragraphId: 'p-04', author: '审稿人 C', role: 'reviewer', type: 'comment', quote: '两名研究者独立完成', body: '建议报告编码者间一致性系数，并明确不一致处理规则。', status: 'open', replies: [], createdAt: Date.now() - 48000000 },
-  { id: 'c-05', paragraphId: 'p-05', author: '审稿人 D', role: 'reviewer', type: 'comment', quote: '邀请第三位研究者裁决', body: '与上一段重复：都在说明编码分歧如何解决，建议合并意见。', status: 'open', replies: [], createdAt: Date.now() - 43000000 },
-  { id: 'c-06', paragraphId: 'p-06', author: '审稿人 B', role: 'reviewer', type: 'suggestion', quote: '但没有显著降低维护者处理复杂议题的认知负担', body: '“显著”需要给出统计检验与效应量。', suggestion: '初步结果显示，辅助工具缩短了首次响应时间，但对复杂议题处理时长与自我报告认知负担均未产生统计显著影响。', status: 'open', replies: [], createdAt: Date.now() - 36000000 },
+  { id: 'c-01', paragraphId: 'p-02', author: '审稿人 A', role: 'reviewer', type: 'suggestion', quote: '其真实维护工作流中的影响', body: '建议把“影响”具体化为可观察指标。', suggestion: '近年来，大型语言模型被广泛用于代码生成与缺陷定位，但在真实维护工作流中究竟改变了哪些协作行为，仍缺少系统证据。', status: 'open', reviews: [], replies: [{ id: 'r-01', author: '作者', role: 'author', body: '可以，修改后会补充指标定义。', createdAt: Date.now() - 7200000 }], createdAt: Date.now() - 86400000 },
+  { id: 'c-02', paragraphId: 'p-02', author: '审稿人 B', role: 'reviewer', type: 'comment', quote: '缺少系统证据', body: '这里的“系统证据”范围过大，建议限定为本研究覆盖的议题语料。', status: 'open', reviews: [], replies: [], createdAt: Date.now() - 64000000 },
+  { id: 'c-03', paragraphId: 'p-03', author: '审稿人 A', role: 'reviewer', type: 'comment', quote: '26 位核心维护者', body: '请说明抽样方式和地域分布，避免样本选择偏差。', status: 'open', reviews: [], replies: [], createdAt: Date.now() - 54000000 },
+  { id: 'c-04', paragraphId: 'p-04', author: '审稿人 C', role: 'reviewer', type: 'comment', quote: '两名研究者独立完成', body: '建议报告编码者间一致性系数，并明确不一致处理规则。', status: 'open', reviews: [], replies: [], createdAt: Date.now() - 48000000 },
+  { id: 'c-05', paragraphId: 'p-05', author: '审稿人 D', role: 'reviewer', type: 'comment', quote: '邀请第三位研究者裁决', body: '与上一段重复：都在说明编码分歧如何解决，建议合并意见。', status: 'open', reviews: [], replies: [], createdAt: Date.now() - 43000000 },
+  { id: 'c-06', paragraphId: 'p-06', author: '审稿人 B', role: 'reviewer', type: 'suggestion', quote: '但没有显著降低维护者处理复杂议题的认知负担', body: '“显著”需要给出统计检验与效应量。', suggestion: '初步结果显示，辅助工具缩短了首次响应时间，但对复杂议题处理时长与自我报告认知负担均未产生统计显著影响。', status: 'open', reviews: [], replies: [], createdAt: Date.now() - 36000000 },
 ]
+type StoredComment = Omit<Comment, 'reviews'> & { reviews?: ReviewRecord[] }
 const seed = typeof localStorage !== 'undefined' ? localStorage.getItem(DRAFT_KEY) : null
-const parsed = seed ? JSON.parse(seed) as Partial<{ paragraphs: Paragraph[]; comments: Comment[]; versions: Version[] }> : null
+const parsed = seed ? JSON.parse(seed) as Partial<{ paragraphs: Paragraph[]; comments: StoredComment[]; versions: Version[] }> : null
 const initialParagraphs = parsed?.paragraphs?.length ? parsed.paragraphs : baseParagraphs
-const initialComments = parsed?.comments ?? baseComments
+const initialComments: Comment[] = (parsed?.comments ?? baseComments).map((comment) => ({ ...comment, reviews: comment.reviews ?? [] }))
 const initialVersions: Version[] = parsed?.versions ?? [
   { id: 'v-01', label: '投稿初稿 v1', createdAt: Date.now() - 1209600000, paragraphs: JSON.parse(JSON.stringify(baseParagraphs)) as Paragraph[] },
   { id: 'v-02', label: '审阅基线 v2', createdAt: Date.now() - 172800000, paragraphs: JSON.parse(JSON.stringify(baseParagraphs.map((p) => p.id === 'p-04' ? { ...p, text: `${p.text} 编码规则在预注册方案中说明。` } : p))) as Paragraph[] },
@@ -41,7 +42,7 @@ interface ReviewState {
   comments: Comment[]
   versions: Version[]
   selectedParagraphId: string
-  commentFilter: 'all' | 'open' | 'suggestion' | 'duplicate'
+  commentFilter: 'all' | 'open' | 'suggestion' | 'duplicate' | 'pending_review'
   revisionMode: boolean
   dirty: boolean
   conflicts: EditConflict[]
@@ -54,7 +55,8 @@ interface ReviewState {
   updateParagraph: (id: string, text: string) => void
   addComment: (input: Pick<Comment, 'paragraphId' | 'type' | 'quote' | 'body' | 'suggestion'>) => void
   replyComment: (commentId: string, body: string) => void
-  resolveSuggestion: (commentId: string, accepted: boolean) => void
+  resolveSuggestion: (commentId: string, accepted: boolean, note: string) => void
+  reviewSuggestion: (commentId: string, decision: ReviewDecision, note: string) => void
   mergeComment: (commentId: string, targetId: string) => void
   toggleLock: (paragraphId: string) => void
   createVersion: (label: string) => void
@@ -106,6 +108,7 @@ export const useReviewStore = create<ReviewState>((set, get) => {
         author: state.role === 'reviewer' ? '审稿人 A' : state.role === 'author' ? '作者' : '编辑',
         role: state.role,
         status: 'open',
+        reviews: [],
         replies: [],
         createdAt: Date.now(),
       }, ...state.comments],
@@ -116,15 +119,40 @@ export const useReviewStore = create<ReviewState>((set, get) => {
         replies: [...comment.replies, { id: id('reply'), author: state.role === 'author' ? '作者' : state.role === 'reviewer' ? '审稿人 A' : '编辑', role: state.role, body, createdAt: Date.now() } as Reply],
       } : comment),
     })),
-    resolveSuggestion: (commentId, accepted) => record((state) => {
+    resolveSuggestion: (commentId, accepted, note) => record((state) => {
       const comment = state.comments.find((item) => item.id === commentId)
       return {
-        comments: state.comments.map((item) => item.id === commentId ? { ...item, status: accepted ? 'accepted' : 'rejected' } : item),
+        comments: state.comments.map((item) => item.id === commentId ? {
+          ...item,
+          status: 'pending_review' as const,
+          resolution: {
+            decision: accepted ? 'accepted' as const : 'rejected' as const,
+            note: note.trim(),
+            by: state.role === 'author' ? '作者' : state.role === 'reviewer' ? '审稿人 A' : '编辑',
+            at: Date.now(),
+          },
+        } : item),
         paragraphs: comment?.suggestion && accepted
           ? state.paragraphs.map((paragraph) => paragraph.id === comment.paragraphId ? { ...paragraph, text: comment.suggestion as string, status: 'accepted' } : paragraph)
           : state.paragraphs,
       }
     }),
+    reviewSuggestion: (commentId, decision, note) => record((state) => ({
+      comments: state.comments.map((comment) => {
+        if (comment.id !== commentId || comment.status !== 'pending_review') return comment
+        const entry: ReviewRecord = {
+          id: id('review'),
+          decision,
+          note: note.trim(),
+          by: state.role === 'reviewer' ? '审稿人 A' : state.role === 'author' ? '作者' : '编辑',
+          at: Date.now(),
+        }
+        // 退回只把建议打回待处理，正文已应用的改动保留，作者可在此基础上重新处理
+        return decision === 'returned'
+          ? { ...comment, status: 'open' as const, reviews: [...comment.reviews, entry] }
+          : { ...comment, status: comment.resolution?.decision === 'rejected' ? 'rejected' as const : 'accepted' as const, reviews: [...comment.reviews, entry] }
+      }),
+    })),
     mergeComment: (commentId, targetId) => record((state) => ({
       comments: state.comments.map((comment) => comment.id === commentId ? { ...comment, status: 'merged', mergedInto: targetId } : comment),
     })),

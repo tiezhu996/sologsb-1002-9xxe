@@ -3,17 +3,24 @@ import {
   ArrowLeftOutlined, ArrowRightOutlined, BranchesOutlined, CheckOutlined, CloseOutlined,
   CommentOutlined, DiffOutlined, DeleteOutlined, FileDoneOutlined, FileTextOutlined,
   HistoryOutlined, LockOutlined, MenuFoldOutlined, MessageOutlined, PlusOutlined,
-  RedoOutlined, SaveOutlined, SendOutlined, SwapOutlined, UndoOutlined, UnlockOutlined, UserSwitchOutlined,
+  RedoOutlined, RollbackOutlined, SaveOutlined, SendOutlined, SwapOutlined, UndoOutlined, UnlockOutlined, UserSwitchOutlined,
 } from '@ant-design/icons'
 import { Alert, Badge, Button, Card, Checkbox, Divider, Empty, Input, Modal, Radio, Segmented, Select, Space, Tag, Tooltip, message } from 'antd'
 import { submitRemotePatch } from './services/mockApi'
 import { useReviewStore } from './store/review'
-import type { Comment, CommentType, Paragraph, Role } from './types'
+import type { Comment, CommentStatus, CommentType, Paragraph, Role } from './types'
 
 const roleMeta: Record<Role, { label: string; description: string; color: string }> = {
   author: { label: '作者工作区', description: '编辑正文，逐条接受或拒绝修改建议', color: '#2f6f5e' },
   reviewer: { label: '审稿人工作区', description: '引用原文、添加批注与修改建议并参与讨论', color: '#9a5b25' },
   editor: { label: '编辑工作区', description: '合并重复意见、锁定已确认段落并比较版本', color: '#5b4d8e' },
+}
+const commentStatusMeta: Record<CommentStatus, { color: string; label: string } | null> = {
+  open: null,
+  pending_review: { color: 'gold', label: '待复核' },
+  accepted: { color: 'green', label: '已接受' },
+  rejected: { color: 'red', label: '已拒绝' },
+  merged: { color: 'blue', label: '已合并' },
 }
 const roleIcon = (role: Role) => role === 'author' ? <FileDoneOutlined /> : role === 'reviewer' ? <CommentOutlined /> : <BranchesOutlined />
 const formatDate = (value: number) => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
@@ -22,7 +29,7 @@ export default function App() {
   const {
     role, paragraphs, comments, versions, selectedParagraphId, commentFilter, revisionMode, dirty, conflicts,
     setRole, selectParagraph, setCommentFilter, setRevisionMode, updateParagraph, addComment, replyComment,
-    resolveSuggestion, mergeComment, toggleLock, createVersion, addConflict, resolveConflict, dismissConflict,
+    resolveSuggestion, reviewSuggestion, mergeComment, toggleLock, createVersion, addConflict, resolveConflict, dismissConflict,
     undo, redo, save, resetDemo,
   } = useReviewStore()
   const [composerOpen, setComposerOpen] = useState(false)
@@ -31,6 +38,10 @@ export default function App() {
   const [suggestion, setSuggestion] = useState('')
   const [quote, setQuote] = useState('')
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({})
+  const [decisionTarget, setDecisionTarget] = useState<{ commentId: string; accepted: boolean } | null>(null)
+  const [decisionNote, setDecisionNote] = useState('')
+  const [returnTargetId, setReturnTargetId] = useState<string | null>(null)
+  const [returnNote, setReturnNote] = useState('')
   const [versionOpen, setVersionOpen] = useState(false)
   const [versionA, setVersionA] = useState(versions[1]?.id ?? versions[0]?.id)
   const [versionB, setVersionB] = useState(versions[0]?.id)
@@ -43,10 +54,12 @@ export default function App() {
     return acc
   }, {}), [comments])
   const duplicateParagraphIds = useMemo(() => new Set(Object.entries(paragraphCommentCounts).filter(([, count]) => count > 1).map(([id]) => id)), [paragraphCommentCounts])
+  const pendingReviewCount = useMemo(() => comments.filter((comment) => comment.status === 'pending_review').length, [comments])
   const visibleComments = useMemo(() => comments.filter((comment) => {
     if (commentFilter === 'open') return comment.status === 'open'
     if (commentFilter === 'suggestion') return comment.type === 'suggestion' && comment.status === 'open'
     if (commentFilter === 'duplicate') return duplicateParagraphIds.has(comment.paragraphId) && comment.status === 'open'
+    if (commentFilter === 'pending_review') return comment.status === 'pending_review'
     return true
   }).sort((a, b) => b.createdAt - a.createdAt), [commentFilter, comments, duplicateParagraphIds])
 
@@ -101,6 +114,20 @@ export default function App() {
     addComment({ paragraphId: selected.id, type: commentType, quote, body: commentBody.trim(), suggestion: commentType === 'suggestion' ? suggestion : undefined })
     setCommentBody(''); setSuggestion(''); setQuote(''); setComposerOpen(false)
     message.success(commentType === 'suggestion' ? '修改建议已提交' : '段落批注已添加')
+  }
+  const submitDecision = () => {
+    if (!decisionTarget) return
+    if (!decisionNote.trim()) { message.warning('请填写处理说明，供审稿人复核'); return }
+    resolveSuggestion(decisionTarget.commentId, decisionTarget.accepted, decisionNote)
+    setDecisionTarget(null); setDecisionNote('')
+    message.success('处理结果已提交，等待审稿人复核')
+  }
+  const submitReturn = () => {
+    if (!returnTargetId) return
+    if (!returnNote.trim()) { message.warning('请说明退回原因'); return }
+    reviewSuggestion(returnTargetId, 'returned', returnNote)
+    setReturnTargetId(null); setReturnNote('')
+    message.success('已退回作者重新处理')
   }
   const handleMockConflict = async () => {
     if (!selected) return
@@ -243,7 +270,7 @@ export default function App() {
           </div>
           <div className="comment-filters">
             <Radio.Group value={commentFilter} onChange={(event) => setCommentFilter(event.target.value)} buttonStyle="solid" size="small">
-              <Radio.Button value="all">全部</Radio.Button><Radio.Button value="open">待处理</Radio.Button><Radio.Button value="suggestion">建议</Radio.Button><Radio.Button value="duplicate">重复</Radio.Button>
+              <Radio.Button value="all">全部</Radio.Button><Radio.Button value="open">待处理</Radio.Button><Radio.Button value="pending_review">待复核{pendingReviewCount > 0 ? ` ${pendingReviewCount}` : ''}</Radio.Button><Radio.Button value="suggestion">建议</Radio.Button><Radio.Button value="duplicate">重复</Radio.Button>
             </Radio.Group>
           </div>
           <div className="comment-list">
@@ -254,7 +281,25 @@ export default function App() {
                   <button className="quote-line" onClick={() => paragraph && scrollToParagraph(paragraph.id)}>“{comment.quote}” · 段落 {paragraph?.number}</button>
                   <p className="comment-body">{comment.body}</p>
                   {comment.suggestion && <div className="suggestion-box"><small>建议改为</small><p>{comment.suggestion}</p></div>}
-                  {comment.status !== 'open' && <Tag color={comment.status === 'accepted' ? 'green' : comment.status === 'rejected' ? 'red' : 'blue'}>{comment.status === 'accepted' ? '已接受' : comment.status === 'rejected' ? '已拒绝' : '已合并'}</Tag>}
+                  {comment.status !== 'open' && <Tag color={commentStatusMeta[comment.status]?.color}>{commentStatusMeta[comment.status]?.label}</Tag>}
+                  {comment.resolution && (
+                    <div className="resolution-box">
+                      <small>作者处理：{comment.resolution.decision === 'accepted' ? '接受' : '拒绝'} · {comment.resolution.by} · {formatDate(comment.resolution.at)}</small>
+                      <p>{comment.resolution.note}</p>
+                    </div>
+                  )}
+                  {comment.reviews.length > 0 && (
+                    <div className="review-records">
+                      {comment.reviews.map((entry) => (
+                        <div key={entry.id} className={`review-record ${entry.decision}`}>
+                          <b>{entry.by}</b>
+                          <Tag color={entry.decision === 'confirmed' ? 'green' : 'red'}>{entry.decision === 'confirmed' ? '复核通过' : '退回'}</Tag>
+                          <span>{entry.note || '确认修改达到要求'}</span>
+                          <small>{formatDate(entry.at)}</small>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="replies">
                     {comment.replies.map((reply) => <div key={reply.id} className="reply"><b>{reply.author}</b><span>{reply.body}</span></div>)}
                   </div>
@@ -262,7 +307,8 @@ export default function App() {
                     <Input size="small" value={replyDrafts[comment.id] ?? ''} onChange={(event) => setReplyDrafts((drafts) => ({ ...drafts, [comment.id]: event.target.value }))} placeholder="回复讨论…" onPressEnter={() => { const body = replyDrafts[comment.id]?.trim(); if (body) { replyComment(comment.id, body); setReplyDrafts((drafts) => ({ ...drafts, [comment.id]: '' })) } }} />
                     <Button size="small" type="text" icon={<SendOutlined />} onClick={() => { const body = replyDrafts[comment.id]?.trim(); if (body) { replyComment(comment.id, body); setReplyDrafts((drafts) => ({ ...drafts, [comment.id]: '' })) } }} />
                   </div>
-                  {comment.status === 'open' && role === 'author' && comment.type === 'suggestion' && <div className="decision-row"><Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => resolveSuggestion(comment.id, true)}>接受修改</Button><Button danger size="small" icon={<CloseOutlined />} onClick={() => resolveSuggestion(comment.id, false)}>拒绝</Button></div>}
+                  {comment.status === 'open' && role === 'author' && comment.type === 'suggestion' && <div className="decision-row"><Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => { setDecisionTarget({ commentId: comment.id, accepted: true }); setDecisionNote('') }}>接受修改</Button><Button danger size="small" icon={<CloseOutlined />} onClick={() => { setDecisionTarget({ commentId: comment.id, accepted: false }); setDecisionNote('') }}>拒绝</Button></div>}
+                  {comment.status === 'pending_review' && role === 'reviewer' && comment.type === 'suggestion' && <div className="decision-row"><Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => { reviewSuggestion(comment.id, 'confirmed', ''); message.success('已确认关闭该建议') }}>确认关闭</Button><Button danger size="small" icon={<RollbackOutlined />} onClick={() => { setReturnTargetId(comment.id); setReturnNote('') }}>退回</Button></div>}
                   {comment.status === 'open' && role === 'editor' && duplicateParagraphIds.has(comment.paragraphId) && (() => {
                     const sibling = comments.find((item) => item.id !== comment.id && item.paragraphId === comment.paragraphId && item.status === 'open')
                     return sibling ? <Button size="small" type="dashed" icon={<BranchesOutlined />} onClick={() => mergeComment(comment.id, sibling.id)}>合并到“{sibling.author}”意见</Button> : null
@@ -284,6 +330,20 @@ export default function App() {
           {commentType === 'suggestion' && <Input.TextArea value={suggestion} onChange={(event) => setSuggestion(event.target.value)} autoSize={{ minRows: 3, maxRows: 7 }} />}
           <label>说明</label>
           <Input.TextArea value={commentBody} onChange={(event) => setCommentBody(event.target.value)} placeholder="说明修改理由或希望作者关注的问题" autoSize={{ minRows: 2, maxRows: 5 }} />
+        </div>
+      </Modal>
+
+      <Modal title={decisionTarget?.accepted ? '接受修改建议' : '拒绝修改建议'} open={!!decisionTarget} onCancel={() => { setDecisionTarget(null); setDecisionNote('') }} onOk={submitDecision} okText="提交处理结果" width={560}>
+        <div className="composer">
+          <label>处理说明（必填，提交后进入待复核，审稿人可见）</label>
+          <Input.TextArea value={decisionNote} onChange={(event) => setDecisionNote(event.target.value)} placeholder={decisionTarget?.accepted ? '说明实际做了哪些修改、依据是什么' : '说明不接受该建议的理由'} autoSize={{ minRows: 3, maxRows: 6 }} />
+        </div>
+      </Modal>
+
+      <Modal title="退回修改建议" open={!!returnTargetId} onCancel={() => { setReturnTargetId(null); setReturnNote('') }} onOk={submitReturn} okText="退回作者" okButtonProps={{ danger: true }} width={560}>
+        <div className="composer">
+          <label>复核意见（必填，退回后建议回到待处理，正文已产生的改动保留）</label>
+          <Input.TextArea value={returnNote} onChange={(event) => setReturnNote(event.target.value)} placeholder="说明修改未达到要求的地方，供作者重新处理" autoSize={{ minRows: 3, maxRows: 6 }} />
         </div>
       </Modal>
 
