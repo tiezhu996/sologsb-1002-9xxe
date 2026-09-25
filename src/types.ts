@@ -1,7 +1,22 @@
 export type Role = 'author' | 'reviewer' | 'editor'
 export type ParagraphStatus = 'open' | 'accepted' | 'locked'
-export type CommentStatus = 'open' | 'accepted' | 'rejected' | 'merged'
+export type CommentStatus = 'open' | 'pending_review' | 'accepted' | 'rejected' | 'merged'
 export type CommentType = 'comment' | 'suggestion'
+
+export interface Resolution {
+  decision: 'accepted' | 'rejected'
+  note: string
+  author: string
+  createdAt: number
+}
+
+export interface ReviewRecord {
+  id: string
+  action: 'confirmed' | 'returned'
+  note: string
+  author: string
+  createdAt: number
+}
 
 export interface Reply {
   id: string
@@ -21,6 +36,8 @@ export interface Comment {
   body: string
   suggestion?: string
   status: CommentStatus
+  resolution?: Resolution
+  reviews: ReviewRecord[]
   replies: Reply[]
   createdAt: number
   mergedInto?: string
